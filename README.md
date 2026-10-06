@@ -62,7 +62,8 @@ pip install -r requirements.txt
 ### Pipeline (raw -> validated/rejected)
 
 ```bash
-python -m src.pipeline --arquivo data/raw/clientes.csv --schema cliente --chave id_cliente
+# exemplo versionado (20 linhas, com 3 falhas propositais)
+python -m src.pipeline --arquivo data/raw/clientes_exemplo.csv --schema cliente --chave id_cliente
 python -m src.pipeline --base . --schema cliente --suite clientes
 ```
 
@@ -71,7 +72,7 @@ from pathlib import Path
 from src.pipeline import DataQualityPipeline
 
 pipe = DataQualityPipeline(base_dir=".", colunas_chave=["id_cliente"])
-res = pipe.executar_arquivo("data/raw/clientes.csv", nome_schema="cliente", nome_suite="clientes")
+res = pipe.executar_arquivo("data/raw/clientes_exemplo.csv", nome_schema="cliente", nome_suite="clientes")
 print(res["pandera_valido"], res["relatorio_html"], len(res["alertas"]))
 ```
 
