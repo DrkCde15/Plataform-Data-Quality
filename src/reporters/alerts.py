@@ -298,6 +298,22 @@ class AlertSystem:
                 except Exception as e:
                     logger.error(f"Erro ao enviar alerta via {type(canal).__name__}: {e}")
 
+    def enviar_notificacao(self, alertas: List[Alerta]) -> int:
+        """
+        Envia uma lista de alertas pelos canais configurados.
+
+        Compat com o exemplo antigo do README
+        (`verificar_falhas()` + `enviar_notificacao()`).
+        O caminho atual já envia automaticamente dentro de
+        `verificar_falhas()`; use este método apenas para reenviar
+        alertas existentes ou listas customizadas.
+
+        Returns:
+            Número de alertas processados.
+        """
+        self._enviar_alertas(alertas)
+        return len(alertas)
+
     def _regra_completude(self, resultados: Dict[str, Any]) -> Optional[Alerta]:
         """Regra: alertar quando completude estiver abaixo do limiar."""
         limiar = resultados.get("limiar_completude", 90)

@@ -9,6 +9,14 @@ from typing import Any, Dict, List, Optional, Tuple
 import pandas as pd
 
 try:
+    from src.validators.dtypes import tipos_equivalentes
+except ImportError:
+    try:
+        from validators.dtypes import tipos_equivalentes  # type: ignore
+    except ImportError:
+        from .dtypes import tipos_equivalentes  # type: ignore
+
+try:
     # Pandera >= 0.20 (inclui 0.34.1 pinada): API nova em pandera.pandas
     import pandera.pandas as pa
     from pandera.pandas import Check, Column, DataFrameModel, DataFrameSchema
@@ -146,17 +154,60 @@ class SchemaValidator:
         """Registra um novo schema personalizado."""
         self._schemas[nome] = schema
 
-    def validar_dataframe(self, df: pd.DataFrame, nome_schema: str) -> ResultadoValidacao:
+    def listar_schemas(self) -> List[str]:
+        """Retorna os nomes dos schemas registrados."""
+        return list(self._schemas.keys())
+
+    def inferir_schema(self, df: pd.DataFrame) -> Optional[str]:
+        """
+        Infere o schema mais provável pelas colunas presentes.
+
+        Retorna o nome do schema com maior interseção de colunas,
+        ou None se nenhum tiver sobreposição relevante.
+        """
+        colunas = set(df.columns)
+        melhor: Optional[str] = None
+        melhor_score = 0
+        for nome, schema in self._schemas.items():
+            try:
+                esperadas = set(schema.to_schema().columns.keys())
+            except Exception:
+                continue
+            score = len(colunas & esperadas)
+            if score > melhor_score:
+                melhor_score = score
+                melhor = nome
+        # exige pelo menos 3 colunas em comum para evitar falso positivo
+        return melhor if melhor_score >= 3 else None
+
+    def validar_dataframe(
+        self, df: pd.DataFrame, nome_schema: Optional[str] = None
+    ) -> ResultadoValidacao:
         """
         Valida um DataFrame contra um schema registrado.
 
         Args:
             df: DataFrame a ser validado.
-            nome_schema: Nome do schema registrado.
+            nome_schema: Nome do schema registrado. Se None, tenta inferir
+                pelas colunas (ver `inferir_schema()`).
 
         Returns:
             ResultadoValidacao com o resultado da validação.
         """
+        if nome_schema is None:
+            inferido = self.inferir_schema(df)
+            if inferido is None:
+                return ResultadoValidacao(
+                    valido=False,
+                    erros=[
+                        "Nenhum schema informado e não foi possível inferir. "
+                        f"Schemas disponíveis: {self.listar_schemas()}. "
+                        "Passe nome_schema='cliente'|'pedido'|'produto'."
+                    ],
+                    df_original=df,
+                )
+            nome_schema = inferido
+
         if nome_schema not in self._schemas:
             return ResultadoValidacao(
                 valido=False,
@@ -263,16 +314,8 @@ class SchemaValidator:
 
     @staticmethod
     def _tipos_equivalentes(esperado: str, atual: str) -> bool:
-        """Compara dtypes tolerando object<->str do pandas 3 e aliases comuns."""
-        if esperado == atual:
-            return True
-        texto = {"object", "str", "string", "StringDtype", "string[python]", "string[pyarrow]"}
-        if esperado in texto and (atual in texto or atual.startswith("string")):
-            return True
-        # int/float combit: int64==int, float64==float, bool==boolean
-        norm = lambda t: {"int": "int64", "float": "float64", "bool": "bool",
-                          "boolean": "bool"}.get(t, t)
-        return norm(esperado) == norm(atual)
+        """Delega para o helper canônico (pandas 2/3). Mantido por compat."""
+        return tipos_equivalentes(esperado, atual)
 
     def validar_tipos(self, df: pd.DataFrame, tipos: Dict[str, str]) -> ResultadoValidacao:
         """

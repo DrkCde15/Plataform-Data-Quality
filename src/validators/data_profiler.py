@@ -9,6 +9,14 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pandas as pd
 
+try:
+    from src.validators.dtypes import categoria_tipo
+except ImportError:
+    try:
+        from validators.dtypes import categoria_tipo  # type: ignore
+    except ImportError:
+        from .dtypes import categoria_tipo  # type: ignore
+
 
 @dataclass
 class PerfilColuna:
@@ -290,11 +298,12 @@ class DataProfiler:
         }
 
         for coluna in perfil.colunas.values():
-            if coluna.tipo in ["int64", "float64", "int32", "float32"]:
+            cat = categoria_tipo(coluna.tipo)
+            if cat == "numerico":
                 resumo["colunas_numericas"] += 1
-            elif coluna.tipo in ["object", "string"]:
+            elif cat == "texto":
                 resumo["colunas_texto"] += 1
-            elif "datetime" in coluna.tipo:
+            elif cat == "data":
                 resumo["colunas_data"] += 1
 
             # Identificar problemas

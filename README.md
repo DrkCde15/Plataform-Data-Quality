@@ -14,18 +14,24 @@ Automatizar a verificação da qualidade de dados em pipelines de dados, garanti
 ## 📁 Estrutura do Projeto
 
 ```
-04-data-quality-platform/
+data-quality-platform/
 ├── README.md
 ├── requirements.txt
 ├── src/
 │   ├── __init__.py
+│   ├── pipeline.py              # Pipeline raw -> validated/rejected (orquestrador)
 │   ├── validators/
 │   │   ├── schema_validator.py    # Validação com Pandera
-│   │   ├── expectations.py        # Great Expectations suites
+│   │   ├── expectations.py        # Great Expectations suites (opcional/legado)
 │   │   └── data_profiler.py       # Profiling de dados
 │   └── reporters/
 │       ├── quality_report.py      # Relatórios HTML/JSON
 │       └── alerts.py              # Sistema de alertas
+├── data/
+│   ├── raw/                     # entrada (CSV/Parquet/JSON)
+│   ├── validated/               # saída: linhas aprovadas
+│   └── rejected/                # saída: linhas reprovadas + *_erros.json
+├── reports/                     # HTML/JSON gerados pelo pipeline (gitignored)
 ├── notebooks/
 │   └── 01_qualidade_dados.ipynb   # Análise interativa
 └── tests/
@@ -47,24 +53,53 @@ pip install -r requirements.txt
 
 ## 💻 Uso
 
+> Caminho recomendado: use o **pipeline** (`src/pipeline.py`). Ele normaliza
+> o dicionário intermediário para o formato único entendido por
+> `QualityReport` e `AlertSystem`, e já separa `validated`/`rejected`.
+> O uso individual dos módulos abaixo também funciona, mas exige montar
+> o dicionário no formato do contrato (ver `normalizar_resultado()`).
+
+### Pipeline (raw -> validated/rejected)
+
+```bash
+python -m src.pipeline --arquivo data/raw/clientes.csv --schema cliente --chave id_cliente
+python -m src.pipeline --base . --schema cliente --suite clientes
+```
+
+```python
+from pathlib import Path
+from src.pipeline import DataQualityPipeline
+
+pipe = DataQualityPipeline(base_dir=".", colunas_chave=["id_cliente"])
+res = pipe.executar_arquivo("data/raw/clientes.csv", nome_schema="cliente", nome_suite="clientes")
+print(res["pandera_valido"], res["relatorio_html"], len(res["alertas"]))
+```
+
 ### Validação com Pandera
 
 ```python
 from src.validators.schema_validator import SchemaValidator
 
 validator = SchemaValidator()
-resultado = validator.validar_dataframe(df)
-print(resultado)
+# nome_schema: "cliente" | "pedido" | "produto" (opcional — infere pelas colunas)
+resultado = validator.validar_dataframe(df, "cliente")
+print(resultado)  # ResultadoValidacao(valido=..., erros=[...], indices_invalidos=[...])
+print(resultado.erros)
+print(validator.listar_schemas())
 ```
 
-### Great Expectations
+### Great Expectations (opcional/legado)
 
 ```python
 from src.validators.expectations import ExpectationsSuite
 
-suite = ExpectationsSuite()
-resultados = suite.executar_validacoes(df)
+suite = ExpectationsSuite()  # levanta ImportError se GX não instalado
+# nome_suite: "clientes" | "pedidos" | "produtos" | "geral"
+resultados = suite.executar_validacoes(df, "clientes")
 ```
+
+> Nota: GX 1.x exige Python <3.14 e GX 0.18.x conflita com `pandas==3`.
+> O pipeline funciona sem GX (etapa ignorada com aviso). Ver `requirements.txt`.
 
 ### Profiling de Dados
 
@@ -72,27 +107,44 @@ resultados = suite.executar_validacoes(df)
 from src.validators.data_profiler import DataProfiler
 
 profiler = DataProfiler()
-relatorio = profiler.perfilar(df)
+perfil = profiler.perfilar(df, nome="clientes")
+resumo = profiler.gerar_resumo(perfil)
+print(resumo["score_qualidade"], resumo["problemas_encontrados"])
 ```
 
 ### Geração de Relatórios
 
 ```python
+from src.pipeline import normalizar_resultado
 from src.reporters.quality_report import QualityReport
 
+# `resultados` precisa do formato unificado (não é o resumo bruto do profiler):
+unificado = normalizar_resultado(
+    dataset="clientes",
+    df=df,
+    perfil_resumo=resumo,
+    perfil=perfil,
+    resultado_pandera=resultado,
+    resultado_gx=resultados,
+    colunas_chave=["id_cliente"],
+)
+
 report = QualityReport()
-report.gerar_html(resultados, "relatorio.html")
-report.gerar_json(resultados, "relatorio.json")
+report.gerar_html(unificado, "reports/clientes_quality.html")
+report.gerar_json(unificado, "reports/clientes_quality.json")
 ```
 
 ### Sistema de Alertas
 
 ```python
-from src.reporters.alerts import AlertSystem
+from src.reporters.alerts import AlertSystem, CanalConsole
 
 alertas = AlertSystem()
-alertas.verificar_falhas(resultados)
-alertas.enviar_notificacao(falhas)
+alertas.adicionar_canal(CanalConsole())  # console, arquivo, email ou webhook
+novos = alertas.verificar_falhas(unificado)  # já envia para todos os canais
+# compat: para reenviar uma lista existente
+# alertas.enviar_notificacao(novos)
+print(alertas.obter_estatisticas())
 ```
 
 ## 🧪 Testes
@@ -113,14 +165,14 @@ pytest tests/ -v
 
 ## 🛠️ Tecnologias
 
-- **Python 3.8+**
+- **Python 3.10+** (testado em 3.14; GX 1.x exige <3.14)
 - **Pandas** - Manipulação de dados
-- **PySpark** - Processamento distribuído
 - **Pandera** - Validação de schemas
-- **Great Expectations** - Framework de qualidade
-- **SQLAlchemy** - Conexão com bancos
+- **Great Expectations** - Framework de qualidade (opcional/legado)
+- **SQLAlchemy** - Conexão com bancos (reservado, sem uso atual)
 - **Jupyter** - Análise interativa
 - **Matplotlib** - Visualizações
+- **Requests** - Webhooks de alerta
 
 ## 📝 Licença
 
