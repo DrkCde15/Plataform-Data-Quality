@@ -35,6 +35,10 @@ class QualityReport:
         """
         data_geracao = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
         score = resultados.get("score_qualidade", 0)
+        score_perfil = resultados.get("score_perfil", score)
+        taxa_aprovacao = resultados.get("taxa_aprovacao_linhas")
+        linhas_validadas = resultados.get("linhas_validadas")
+        linhas_rejeitadas = resultados.get("linhas_rejeitadas")
         total_registros = resultados.get("total_registros", 0)
         colunas_analisadas = resultados.get("colunas_analisadas", 0)
         problemas = resultados.get("problemas", [])
@@ -50,6 +54,23 @@ class QualityReport:
         else:
             cor_score = "#e74c3c"
             status_score = "Crítico"
+
+        # Detalhe DQ-02: score final = min(score do perfil, aprovação de linhas).
+        # Mostra o detalhamento só quando o pipeline informou a taxa.
+        len_problemas = len(problemas)
+        if taxa_aprovacao is not None:
+            datalhe_score = (
+                f'<div class="status" style="font-size: 13px; opacity: 0.85;">'
+                f"perfil {score_perfil:.1f}% · linhas {taxa_aprovacao * 100:.1f}%</div>"
+            )
+            card_aprovacao = f"""<div class="card">
+                <h3>Linhas Aprovadas</h3>
+                <div class="valor">{taxa_aprovacao * 100:.1f}%</div>
+                <div class="status" style="font-size: 13px;">{linhas_validadas} ok · {linhas_rejeitadas} rejeitadas</div>
+            </div>"""
+        else:
+            datalhe_score = ""
+            card_aprovacao = ""
 
         # Gerar HTML
         html = f"""<!DOCTYPE html>
@@ -96,6 +117,7 @@ class QualityReport:
                 <h3>Score de Qualidade</h3>
                 <div class="valor">{score:.1f}%</div>
                 <div class="status">{status_score}</div>
+                {datalhe_score}
             </div>
             <div class="card">
                 <h3>Total de Registros</h3>
@@ -107,8 +129,9 @@ class QualityReport:
             </div>
             <div class="card">
                 <h3>Problemas Encontrados</h3>
-                <div class="valor">{len(problemas)}</div>
+                <div class="valor">{len_problemas}</div>
             </div>
+            {card_aprovacao}
         </div>
 """
 

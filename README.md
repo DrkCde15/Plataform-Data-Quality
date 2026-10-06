@@ -153,6 +153,16 @@ pytest tests/ -v
 | Validez | Conformidade com regras de negócio |
 | Tempestividade | Verificação de datas/atualizações |
 
+### Score de qualidade (DQ-02)
+
+O profiler calcula um score de **colunas** (40% completude + 30% unicidade + 30% consistência — heurística documentada em `data_profiler.py`). O pipeline combina isso com a **taxa de aprovação de linhas**:
+
+```
+score_final = min(score_perfil, taxa_aprovacao × 100)
+```
+
+A qualidade é limitada pela pior dimensão: com 20% das linhas rejeitadas, o score nunca passa de 80. O relatório HTML exibe os dois números lado a lado.
+
 ## 🛠️ Tecnologias
 
 - **Python 3.10+** (testado em 3.14)

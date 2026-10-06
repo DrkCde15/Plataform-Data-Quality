@@ -199,12 +199,17 @@ class DataProfiler:
 
     def _calcular_score_qualidade(self, perfil: PerfilDataFrame) -> float:
         """
-        Calcula um score geral de qualidade dos dados (0-100).
+        Calcula um score geral de qualidade das COLUNAS (0-100).
 
-        Fatores:
+        Fórmula (heurística, não norma):
         - Completude (40%): percentual de colunas sem nulos
         - Unicidade (30%): percentual de registros únicos
-        - Consistência (30%): tipos corretos e valores válidos
+        - Consistência (30%): 100 - 5 por coluna com >50% nulos
+          - 2 por coluna constante; piso em 0
+
+        Limitação conhecida (DQ-02): este score ignora a taxa de
+        aprovação de LINHAS. O `pipeline.normalizar_resultado()`
+        corrige isso com `min(score_perfil, taxa_aprovacao * 100)`.
         """
         if perfil.total_registros == 0:
             return 0.0

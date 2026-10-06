@@ -186,6 +186,9 @@ def normalizar_resultado(
     resultado_pandera: Optional[ResultadoValidacao] = None,
     colunas_chave: Optional[List[str]] = None,
     limiar_completude: float = 90.0,
+    taxa_aprovacao: Optional[float] = None,
+    linhas_validadas: Optional[int] = None,
+    linhas_rejeitadas: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
     Normaliza as saídas de profiler/pandera para o contrato único.
@@ -194,13 +197,24 @@ def normalizar_resultado(
     - QualityReport usa: colunas_analisadas, problemas, validacoes
     - AlertSystem usa: colunas{percentual_nulos, duplicados}, colunas_chave, comparacao
     Esta função preenche todos os aliases para os três consumidores.
+
+    Score honesto (DQ-02): o `score_qualidade` final é o MÍNIMO entre o
+    score do perfil (colunas) e a taxa de aprovação de linhas x 100.
+    A qualidade é limitada pela pior dimensão: não há métrica verde
+    com metade das linhas rejeitadas. Sem `taxa_aprovacao`, o score é
+    só o do perfil (comportamento legado).
     """
     perfil_resumo = perfil_resumo or {}
     colunas_chave = colunas_chave or []
 
     total_registros = int(perfil_resumo.get("total_registros", len(df)))
     total_colunas = int(perfil_resumo.get("total_colunas", len(df.columns)))
-    score = float(perfil_resumo.get("score_qualidade", 100.0))
+    score_perfil = float(perfil_resumo.get("score_qualidade", 100.0))
+
+    if taxa_aprovacao is not None:
+        score = round(min(score_perfil, float(taxa_aprovacao) * 100), 2)
+    else:
+        score = score_perfil
 
     problemas: List[str] = list(perfil_resumo.get("problemas_encontrados", []) or [])
     validacoes: List[Dict[str, Any]] = []
@@ -232,6 +246,10 @@ def normalizar_resultado(
         "comparacao": {},
         "limiar_completude": limiar_completude,
         "pandera_erros": pandera_erros,
+        "score_perfil": score_perfil,
+        "taxa_aprovacao_linhas": taxa_aprovacao,
+        "linhas_validadas": linhas_validadas,
+        "linhas_rejeitadas": linhas_rejeitadas,
         "data_processamento": datetime.now().isoformat(),
     }
 
@@ -306,7 +324,12 @@ class DataQualityPipeline:
                 logger.error("Falha na validação Pandera: %s", e)
                 res_pandera = ResultadoValidacao(valido=False, erros=[str(e)], df_original=df)
 
-        # 3. normalização
+        # 3. split validated / rejected (antes da normalização:
+        #    a taxa de aprovação alimenta o score honesto - DQ-02)
+        validados, rejeitados = dividir_validados_rejeitados(df, res_pandera)
+        taxa_aprovacao = (len(validados) / len(df)) if len(df) > 0 else 1.0
+
+        # 4. normalização
         unificado = normalizar_resultado(
             dataset=dataset,
             df=df,
@@ -315,10 +338,12 @@ class DataQualityPipeline:
             resultado_pandera=res_pandera,
             colunas_chave=chaves,
             limiar_completude=self.limiar_completude,
+            taxa_aprovacao=taxa_aprovacao,
+            linhas_validadas=len(validados),
+            linhas_rejeitadas=len(rejeitados),
         )
 
-        # 4. split validated / rejected + escrita
-        validados, rejeitados = dividir_validados_rejeitados(df, res_pandera)
+        # 5. escrita validated / rejected + sidecar
         caminho_val = self.dir_validated / f"{dataset}_validated.csv"
         caminho_rej = self.dir_rejected / f"{dataset}_rejected.csv"
         validados.to_csv(caminho_val, index=False)
@@ -336,13 +361,13 @@ class DataQualityPipeline:
         with open(self.dir_rejected / f"{dataset}_erros.json", "w", encoding="utf-8") as f:
             json.dump(lado, f, indent=2, ensure_ascii=False, default=str)
 
-        # 5. relatórios
+        # 6. relatórios
         html_path = str(self.dir_reports / f"{dataset}_quality.html")
         json_path = str(self.dir_reports / f"{dataset}_quality.json")
         self.report.gerar_html(unificado, html_path, titulo=f"Relatório de Qualidade — {dataset}")
         self.report.gerar_json(unificado, json_path)
 
-        # 6. alertas
+        # 7. alertas
         alertas = self.alerts.verificar_falhas(unificado)
 
         logger.info(
