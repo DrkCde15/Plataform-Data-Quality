@@ -147,7 +147,7 @@ pytest tests/ -v
 
 ## ⏰ Orquestração (Airflow, opcional)
 
-`dags/data_quality.py` roda o pipeline diariamente como **gate de qualidade**: falha se algum dataset for reprovado. Requer Airflow 3.x com este repo e o `requirements.txt` nos workers:
+`dags/data_quality.py` roda o pipeline diariamente como **gate de qualidade**: falha se algum dataset for reprovado. Requer Airflow 2.6 com este repo e o `requirements.txt` nos workers:
 
 ```bash
 export DQ_BASE_DIR=/opt/data-quality-platform  # onde o repo está no worker
@@ -157,7 +157,7 @@ export DQ_SCHEMA=cliente
 
 ### Subir local com docker compose
 
-Sobe Postgres + scheduler + webserver (imagem oficial `apache/airflow:3.3.2-python3.14`, repo montado em `/opt/data-quality-platform`):
+Sobe Postgres + scheduler + webserver (imagem oficial `apache/airflow:2.6.3-python3.11`, repo montado em `/opt/data-quality-platform`):
 
 ```bash
 cp .env.example .env   # ajuste POSTGRES_PASSWORD e FERNET_KEY
