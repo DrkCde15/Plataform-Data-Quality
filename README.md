@@ -167,6 +167,20 @@ docker compose up airflow-init && docker compose up -d
 
 > Sem docker na máquina, o compose não foi testado aqui — só o YAML foi validado. As deps do projeto entram via `_PIP_ADDITIONAL_REQUIREMENTS` no boot (lento na primeira vez).
 
+### Com Podman (rootless)
+
+Troque `docker compose` por `podman compose` e force `AIRFLOW_UID=0` no `.env` (o uid 0 do container mapeia para o seu usuário no host; sem isso, o Airflow não consegue escrever em `data/`):
+
+```bash
+cp .env.example .env   # ajuste POSTGRES_PASSWORD, FERNET_KEY e AIRFLOW_UID=0
+podman compose up airflow-init   # migrate + cria admin (termina sozinho)
+podman compose up -d             # scheduler + webserver
+# UI em http://localhost:8080 (admin / admin)
+podman compose logs -f airflow-scheduler
+```
+
+> A DAG é `@daily` com `catchup=False`: a primeira execução agenda para o dia seguinte — para testar na hora, dispare manualmente na UI (▶️). Para derrubar: `podman compose down` (`-v` apaga o banco).
+
 ## 📋 Regras de Qualidade
 
 | Dimensão | Descrição |
