@@ -31,6 +31,8 @@ data-quality-platform/
 │   ├── raw/                     # entrada (CSV/Parquet/JSON)
 │   ├── validated/               # saída: linhas aprovadas
 │   └── rejected/                # saída: linhas reprovadas + *_erros.json
+├── dags/
+│   └── data_quality.py          # DAG mínima (Airflow 2.x, gate diário)
 ├── reports/                     # HTML/JSON gerados pelo pipeline (gitignored)
 ├── notebooks/
 │   └── 01_qualidade_dados.ipynb   # Análise interativa
@@ -141,6 +143,16 @@ print(alertas.obter_estatisticas())
 
 ```bash
 pytest tests/ -v
+```
+
+## ⏰ Orquestração (Airflow, opcional)
+
+`dags/data_quality.py` roda o pipeline diariamente como **gate de qualidade**: falha se algum dataset for reprovado. Requer Airflow 2.x com este repo e o `requirements.txt` nos workers:
+
+```bash
+export DQ_BASE_DIR=/opt/data-quality-platform  # onde o repo está no worker
+export DQ_SCHEMA=cliente
+# DQ_FAIL_ON_REJECTED=false  # só reportar, sem falhar a task
 ```
 
 ## 📋 Regras de Qualidade
