@@ -1,0 +1,87 @@
+# Airflow local: scheduler + webserver (api-server) + Postgres.
+# O repo é montado em /opt/data-quality-platform (ver DQ_BASE_DIR na DAG).
+# Primeiro uso:
+#   cp .env.example .env   # ajuste POSTGRES_PASSWORD e FERNET_KEY
+#   docker compose up airflow-init && docker compose up -d
+#   # UI em http://localhost:8080 (admin / admin)
+# Notas:
+# - deps do projeto entram via _PIP_ADDITIONAL_REQUIREMENTS no boot
+#   (lento na primeira vez; para uso contínuo, construa imagem própria).
+# - Sem docker na máquina? Valide ao menos o YAML: python3 -c "import yaml; yaml.safe_load(open('docker-compose.yml'))"
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:3.3.2-python3.14
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/data-quality-platform/dags
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:${POSTGRES_PASSWORD:-airflow}@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: ${FERNET_KEY:-}
+    PYTHONPATH: /opt/data-quality-platform
+    DQ_BASE_DIR: /opt/data-quality-platform
+    DQ_SCHEMA: ${DQ_SCHEMA:-cliente}
+    _PIP_ADDITIONAL_REQUIREMENTS: pandas==3.0.5 numpy==2.5.3 pandera==0.34.1 requests==2.32.5
+  volumes:
+    - .:/opt/data-quality-platform
+    - airflow-logs:/opt/airflow/logs
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-airflow}
+      POSTGRES_DB: airflow
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 5
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        airflow db migrate
+        airflow users create --username admin --password admin \
+          --firstname Data --lastname Quality --role Admin --email admin@example.com || true
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  pgdata:
+  airflow-logs:
