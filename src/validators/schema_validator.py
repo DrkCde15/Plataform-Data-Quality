@@ -273,21 +273,39 @@ class SchemaValidator:
         """
         colunas_schema = {}
         for nome, config in colunas.items():
-            kwargs = {}
+            kwargs: Dict[str, Any] = {}
+            checks: List[Check] = []
             if "dtype" in config:
-                kwargs["dtype"] = config["dtype"]
+                dtype = config["dtype"]
+                # pandas 3 usa dtype `str` para texto; 'object' não passa
+                # mais na checagem de tipo (mas passa no pandas 2).
+                # Normaliza para 'str', aceito nos dois.
+                if dtype == "object":
+                    dtype = "str"
+                kwargs["dtype"] = dtype
             if "nullable" in config:
                 kwargs["nullable"] = config["nullable"]
             if "unique" in config:
                 kwargs["unique"] = config["unique"]
+            # Na pandera >= 0.20, checks vão em `checks=[...]`,
+            # não como kwargs do Column (ge/le/isin/str_* removidos).
             if "ge" in config:
-                kwargs["ge"] = config["ge"]
+                checks.append(Check.ge(config["ge"]))
             if "le" in config:
-                kwargs["le"] = config["le"]
+                checks.append(Check.le(config["le"]))
             if "isin" in config:
-                kwargs["isin"] = config["isin"]
+                checks.append(Check.isin(config["isin"]))
             if "str_matches" in config:
-                kwargs["str_matches"] = config["str_matches"]
+                checks.append(Check.str_matches(config["str_matches"]))
+            if "str_length" in config:
+                limites = config["str_length"] or {}
+                checks.append(
+                    Check.str_length(
+                        limites.get("min_value"), limites.get("max_value")
+                    )
+                )
+            if checks:
+                kwargs["checks"] = checks
             colunas_schema[nome] = Column(**kwargs)
 
         return DataFrameSchema(columns=colunas_schema, index=index, coerce=coerce)
