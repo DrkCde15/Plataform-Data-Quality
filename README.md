@@ -1,6 +1,6 @@
 # 📊 Plataforma de Qualidade de Dados
 
-Plataforma completa para validação, profiling e monitoramento da qualidade de dados utilizando Python, Pandera, Great Expectations, Pandas e PySpark.
+Plataforma completa para validação, profiling e monitoramento da qualidade de dados utilizando Python, Pandera e Pandas.
 
 ## 🎯 Objetivo
 
@@ -22,7 +22,7 @@ data-quality-platform/
 │   ├── pipeline.py              # Pipeline raw -> validated/rejected (orquestrador)
 │   ├── validators/
 │   │   ├── schema_validator.py    # Validação com Pandera
-│   │   ├── expectations.py        # Great Expectations suites (opcional/legado)
+│   │   ├── dtypes.py              # Helpers canônicos de tipos (pandas 2/3)
 │   │   └── data_profiler.py       # Profiling de dados
 │   └── reporters/
 │       ├── quality_report.py      # Relatórios HTML/JSON
@@ -64,15 +64,18 @@ pip install -r requirements.txt
 ```bash
 # exemplo versionado (20 linhas, com 3 falhas propositais)
 python -m src.pipeline --arquivo data/raw/clientes_exemplo.csv --schema cliente --chave id_cliente
-python -m src.pipeline --base . --schema cliente --suite clientes
+python -m src.pipeline --base . --schema cliente
 ```
+
+> Semântica de quarentena: `validated/` = "aprovado Pandera".
+> Linhas reprovadas vão para `rejected/` + sidecar `<dataset>_erros.json`.
 
 ```python
 from pathlib import Path
 from src.pipeline import DataQualityPipeline
 
 pipe = DataQualityPipeline(base_dir=".", colunas_chave=["id_cliente"])
-res = pipe.executar_arquivo("data/raw/clientes_exemplo.csv", nome_schema="cliente", nome_suite="clientes")
+res = pipe.executar_arquivo("data/raw/clientes_exemplo.csv", nome_schema="cliente")
 print(res["pandera_valido"], res["relatorio_html"], len(res["alertas"]))
 ```
 
@@ -88,19 +91,6 @@ print(resultado)  # ResultadoValidacao(valido=..., erros=[...], indices_invalido
 print(resultado.erros)
 print(validator.listar_schemas())
 ```
-
-### Great Expectations (opcional/legado)
-
-```python
-from src.validators.expectations import ExpectationsSuite
-
-suite = ExpectationsSuite()  # levanta ImportError se GX não instalado
-# nome_suite: "clientes" | "pedidos" | "produtos" | "geral"
-resultados = suite.executar_validacoes(df, "clientes")
-```
-
-> Nota: GX 1.x exige Python <3.14 e GX 0.18.x conflita com `pandas==3`.
-> O pipeline funciona sem GX (etapa ignorada com aviso). Ver `requirements.txt`.
 
 ### Profiling de Dados
 
@@ -126,7 +116,6 @@ unificado = normalizar_resultado(
     perfil_resumo=resumo,
     perfil=perfil,
     resultado_pandera=resultado,
-    resultado_gx=resultados,
     colunas_chave=["id_cliente"],
 )
 
@@ -166,10 +155,9 @@ pytest tests/ -v
 
 ## 🛠️ Tecnologias
 
-- **Python 3.10+** (testado em 3.14; GX 1.x exige <3.14)
+- **Python 3.10+** (testado em 3.14)
 - **Pandas** - Manipulação de dados
 - **Pandera** - Validação de schemas
-- **Great Expectations** - Framework de qualidade (opcional/legado)
 - **SQLAlchemy** - Conexão com bancos (reservado, sem uso atual)
 - **Jupyter** - Análise interativa
 - **Matplotlib** - Visualizações

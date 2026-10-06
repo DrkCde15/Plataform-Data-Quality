@@ -27,13 +27,15 @@ Formato unificado (contrato):
     ],
     "comparacao": dict,                  # para AlertSystem._regra_aumento_nulos
     "limiar_completude": float,
-    "gx": dict,                          # resultado bruto do GX (se executado)
     "pandera_erros": list[str],
 }
 
+Semântica de quarentena (DQ-03): `validated/` = "aprovado Pandera".
+Linhas reprovadas vão para `rejected/` + sidecar `<dataset>_erros.json`.
+
 Uso:
-    python -m src.pipeline --raw data/raw --dataset clientes --schema cliente
-    python -m src.pipeline --arquivo data/raw/clientes.csv --schema cliente --suite clientes
+    python -m src.pipeline --arquivo data/raw/clientes_exemplo.csv --schema cliente --chave id_cliente
+    python -m src.pipeline --base . --schema cliente
 """
 
 from __future__ import annotations
@@ -182,12 +184,11 @@ def normalizar_resultado(
     perfil_resumo: Optional[Dict[str, Any]] = None,
     perfil: Any = None,
     resultado_pandera: Optional[ResultadoValidacao] = None,
-    resultado_gx: Optional[Dict[str, Any]] = None,
     colunas_chave: Optional[List[str]] = None,
     limiar_completude: float = 90.0,
 ) -> Dict[str, Any]:
     """
-    Normaliza as saídas de profiler/pandera/GX para o contrato único.
+    Normaliza as saídas de profiler/pandera para o contrato único.
 
     - profiler.gerar_resumo() usa: total_colunas, problemas_encontrados
     - QualityReport usa: colunas_analisadas, problemas, validacoes
@@ -196,7 +197,6 @@ def normalizar_resultado(
     """
     perfil_resumo = perfil_resumo or {}
     colunas_chave = colunas_chave or []
-    resultado_gx = resultado_gx or {}
 
     total_registros = int(perfil_resumo.get("total_registros", len(df)))
     total_colunas = int(perfil_resumo.get("total_colunas", len(df.columns)))
@@ -218,22 +218,6 @@ def normalizar_resultado(
             "coluna": None,
         })
 
-    if resultado_gx:
-        for item in resultado_gx.get("resultados", []):
-            nome = item.get("expectativa", "gx_expectation")
-            sucesso = bool(item.get("sucesso", False))
-            detalhes = item.get("detalhes") or item.get("erro") or ""
-            validacoes.append({
-                "nome": f"gx:{nome}",
-                "sucesso": sucesso,
-                "detalhes": str(detalhes)[:500],
-                "coluna": item.get("coluna"),
-            })
-            if not sucesso:
-                msg = f"[gx] {nome} ({item.get('coluna') or 'tabela'}): {detalhes}"[:300]
-                if msg not in problemas:
-                    problemas.append(msg)
-
     return {
         "dataset": dataset,
         "total_registros": total_registros,
@@ -247,7 +231,6 @@ def normalizar_resultado(
         "validacoes": validacoes,
         "comparacao": {},
         "limiar_completude": limiar_completude,
-        "gx": resultado_gx,
         "pandera_erros": pandera_erros,
         "data_processamento": datetime.now().isoformat(),
     }
@@ -300,37 +283,11 @@ class DataQualityPipeline:
         if not getattr(self.alerts, "_canais", []):
             self.alerts.adicionar_canal(CanalConsole())
 
-        self._gx_suite = None  # lazy
-        self._gx_disponivel: Optional[bool] = None
-
-    # -- GX opcional (não quebra o pipeline se ausente/incompatível) --
-    def _obter_gx(self):
-        if self._gx_disponivel is not None:
-            return self._gx_suite
-        try:
-            from src.validators.expectations import ExpectationsSuite  # type: ignore
-        except ImportError:
-            try:
-                from validators.expectations import ExpectationsSuite  # type: ignore
-            except ImportError as e:
-                logger.warning("Great Expectations indisponível (%s). Seguindo sem GX.", e)
-                self._gx_disponivel = False
-                return None
-        try:
-            self._gx_suite = ExpectationsSuite()
-            self._gx_disponivel = True
-        except Exception as e:
-            logger.warning("GX instalado mas falhou ao iniciar (%s). Seguindo sem GX.", e)
-            self._gx_disponivel = False
-            self._gx_suite = None
-        return self._gx_suite
-
     def executar_dataframe(
         self,
         df: pd.DataFrame,
         dataset: str,
         nome_schema: Optional[str] = None,
-        nome_suite: Optional[str] = None,
         colunas_chave: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """Executa o pipeline completo para um DataFrame já carregado."""
@@ -349,32 +306,18 @@ class DataQualityPipeline:
                 logger.error("Falha na validação Pandera: %s", e)
                 res_pandera = ResultadoValidacao(valido=False, erros=[str(e)], df_original=df)
 
-        # 3. GX (opcional)
-        res_gx: Dict[str, Any] = {}
-        if nome_suite:
-            gx = self._obter_gx()
-            if gx is not None:
-                try:
-                    res_gx = gx.executar_validacoes(df, nome_suite)
-                except Exception as e:
-                    logger.error("Falha na suite GX '%s': %s", nome_suite, e)
-                    res_gx = {"sucesso": False, "erro": str(e), "resultados": []}
-            else:
-                res_gx = {"sucesso": True, "aviso": "GX indisponível, etapa ignorada", "resultados": []}
-
-        # 4. normalização
+        # 3. normalização
         unificado = normalizar_resultado(
             dataset=dataset,
             df=df,
             perfil_resumo=resumo,
             perfil=perfil,
             resultado_pandera=res_pandera,
-            resultado_gx=res_gx,
             colunas_chave=chaves,
             limiar_completude=self.limiar_completude,
         )
 
-        # 5. split validated / rejected + escrita
+        # 4. split validated / rejected + escrita
         validados, rejeitados = dividir_validados_rejeitados(df, res_pandera)
         caminho_val = self.dir_validated / f"{dataset}_validated.csv"
         caminho_rej = self.dir_rejected / f"{dataset}_rejected.csv"
@@ -393,13 +336,13 @@ class DataQualityPipeline:
         with open(self.dir_rejected / f"{dataset}_erros.json", "w", encoding="utf-8") as f:
             json.dump(lado, f, indent=2, ensure_ascii=False, default=str)
 
-        # 6. relatórios
+        # 5. relatórios
         html_path = str(self.dir_reports / f"{dataset}_quality.html")
         json_path = str(self.dir_reports / f"{dataset}_quality.json")
         self.report.gerar_html(unificado, html_path, titulo=f"Relatório de Qualidade — {dataset}")
         self.report.gerar_json(unificado, json_path)
 
-        # 7. alertas
+        # 6. alertas
         alertas = self.alerts.verificar_falhas(unificado)
 
         logger.info(
@@ -422,7 +365,6 @@ class DataQualityPipeline:
         self,
         caminho: Path | str,
         nome_schema: Optional[str] = None,
-        nome_suite: Optional[str] = None,
         colunas_chave: Optional[List[str]] = None,
         dataset: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -430,23 +372,22 @@ class DataQualityPipeline:
         df = carregar_arquivo(caminho)
         return self.executar_dataframe(
             df, dataset or caminho.stem,
-            nome_schema=nome_schema, nome_suite=nome_suite, colunas_chave=colunas_chave,
+            nome_schema=nome_schema, colunas_chave=colunas_chave,
         )
 
     def executar_raw_dir(
         self,
         nome_schema: Optional[str] = None,
-        nome_suite: Optional[str] = None,
         padrao: str = "*.csv",
     ) -> List[Dict[str, Any]]:
         resultados = []
         for arquivo in sorted(self.dir_raw.glob(padrao)):
             if arquivo.is_file():
-                resultados.append(self.executar_arquivo(arquivo, nome_schema, nome_suite))
+                resultados.append(self.executar_arquivo(arquivo, nome_schema))
         if not resultados:  # fallback: qualquer formato suportado
             for arquivo in sorted(self.dir_raw.iterdir()):
                 if arquivo.is_file() and arquivo.suffix.lower() in (".csv", ".parquet", ".pq", ".json"):
-                    resultados.append(self.executar_arquivo(arquivo, nome_schema, nome_suite))
+                    resultados.append(self.executar_arquivo(arquivo, nome_schema))
         return resultados
 
 
@@ -457,7 +398,6 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--raw", default=None, help="diretório raw (padrão: <base>/data/raw)")
     parser.add_argument("--dataset", default=None, help="nome do dataset (padrão: nome do arquivo)")
     parser.add_argument("--schema", default=None, help="nome do schema pandera (cliente|pedido|produto)")
-    parser.add_argument("--suite", default=None, help="nome da suite GX (clientes|pedidos|produtos|geral)")
     parser.add_argument("--chave", action="append", default=None, help="coluna-chave (repetível)")
     parser.add_argument("--padrao", default="*.csv", help="padrão glob para varredura do raw")
     args = parser.parse_args(argv)
@@ -469,11 +409,11 @@ def main(argv: Optional[List[str]] = None) -> int:
         pipe.dir_raw = Path(args.raw)
 
     if args.arquivo:
-        res = pipe.executar_arquivo(args.arquivo, args.schema, args.suite, dataset=args.dataset)
+        res = pipe.executar_arquivo(args.arquivo, args.schema, dataset=args.dataset)
         print(json.dumps({"dataset": res["dataset"], "pandera_valido": res["pandera_valido"],
                           "alertas": len(res["alertas"]), "html": res["relatorio_html"]}, indent=2))
     else:
-        resultados = pipe.executar_raw_dir(args.schema, args.suite, padrao=args.padrao)
+        resultados = pipe.executar_raw_dir(args.schema, padrao=args.padrao)
         if not resultados:
             print(f"Nenhum arquivo encontrado em {pipe.dir_raw}", file=sys.stderr)
             return 1
