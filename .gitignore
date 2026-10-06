@@ -10,3 +10,8 @@ data/validated/
 data/rejected/
 reports/
 *.egg-info/
+# relatórios gerados pelo notebook (células 17-18 escrevem no cwd)
+relatorio_*.html
+resumo_*.html
+relatorio_*.json
+resumo_*.json
